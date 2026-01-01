@@ -1,8 +1,10 @@
 fastapi
 uvicorn
+gunicorn
 sentence-transformers
 torch
 pandas
 numpy
 requests
 python-multipart
+
