@@ -1,7 +1,5 @@
 fastapi
 uvicorn
-gunicorn
+requests
 sentence-transformers
 torch
-requests
-python-dotenv
