@@ -1,62 +1,104 @@
-#imports
+# =========================
+# 1. IMPORTS
+# =========================
 import os
 import pandas as pd
-import torch
+import numpy as np
 import requests
+
 from fastapi import FastAPI, Request
 from sentence_transformers import SentenceTransformer, util
 
 
-#Load Faq + Bert
-# Load FAQ dataset
-faq_df = pd.read_csv("ecommerce_faq_final.csv")
+# =========================
+# 2. CONFIG
+# =========================
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # set in Render → Environment Variables
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-questions = faq_df["question"].tolist()
-answers = faq_df["answer"].tolist()
+FAQ_FILE = "ecommerce_faq_final.csv"
+SIMILARITY_THRESHOLD = 0.6
 
-# Load BERT model
-model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Encode all FAQ questions once
+# =========================
+# 3. LOAD FAQ + MODEL
+# =========================
+faq_df = pd.read_csv(FAQ_FILE)
+
+questions = faq_df["question"].astype(str).tolist()
+answers = faq_df["answer"].astype(str).tolist()
+
+# ✅ PRODUCTION-SAFE MODEL (works on Render Free)
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
 question_embeddings = model.encode(
-    questions,
-    convert_to_tensor=True
+    questions, convert_to_tensor=True, show_progress_bar=False
 )
 
 
-#FAQ Logic Fn
-
-def faq_chatbot(user_text):
+# =========================
+# 4. FAQ CHATBOT LOGIC
+# =========================
+def faq_chatbot(user_text: str) -> str:
     user_embedding = model.encode(
-        user_text,
-        convert_to_tensor=True
+        user_text, convert_to_tensor=True, show_progress_bar=False
     )
 
-    scores = util.cos_sim(
-        user_embedding,
-        question_embeddings
-    )[0]
+    scores = util.cos_sim(user_embedding, question_embeddings)[0]
+    best_score = float(torch_max(scores))
+    best_idx = int(np.argmax(scores.cpu().numpy()))
 
-    best_index = int(torch.argmax(scores))
-    best_score = float(scores[best_index])
+    if best_score >= SIMILARITY_THRESHOLD:
+        return answers[best_idx]
 
-    if best_score < 0.5:
-        return "Sorry, I couldn't find a relevant answer. Please contact support."
+    return (
+        "🤖 Sorry, I couldn’t find an exact answer.\n\n"
+        "You can try:\n"
+        "• Track Order\n"
+        "• Payments\n"
+        "• Returns\n"
+        "• Help"
+    )
 
-    return answers[best_index]
 
-#FastAPI Installation
+def torch_max(tensor):
+    return tensor.max().item()
 
+
+# =========================
+# 5. FASTAPI APP
+# =========================
 app = FastAPI()
 
+
 @app.get("/")
-def health():
+def health_check():
     return {"status": "ok"}
 
-#telegram WEBHOOK
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
+# =========================
+# 6. SEND MESSAGE (WITH BUTTONS)
+# =========================
+def send_message(chat_id: int, text: str):
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": {
+            "keyboard": [
+                [{"text": "📦 Track Order"}, {"text": "💳 Payments"}],
+                [{"text": "↩️ Returns"}, {"text": "🆘 Help"}],
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": False,
+        },
+    }
+
+    requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
+
+
+# =========================
+# 7. TELEGRAM WEBHOOK
+# =========================
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
@@ -64,23 +106,30 @@ async def telegram_webhook(request: Request):
     if "message" not in data:
         return {"ok": True}
 
-    chat_id = data["message"]["chat"]["id"]
-    user_text = data["message"].get("text", "")
+    message = data["message"]
+    chat_id = message["chat"]["id"]
+    text = message.get("text", "")
 
-    # FORCE BERT FOR EVERY MESSAGE
-    reply = faq_chatbot(user_text)
+    # START COMMAND
+    if text.lower() == "/start":
+        send_message(
+            chat_id,
+            "👋 Welcome to the Ecommerce FAQ Bot!\n\n"
+            "Use the buttons below or type your question.",
+        )
+        return {"ok": True}
 
+    # BUTTON NORMALIZATION
+    button_map = {
+        "📦 Track Order": "How can I track my order?",
+        "💳 Payments": "What payment methods are accepted?",
+        "↩️ Returns": "What is your return policy?",
+        "🆘 Help": "How can I contact support?",
+    }
+
+    normalized_text = button_map.get(text, text)
+
+    reply = faq_chatbot(normalized_text)
     send_message(chat_id, reply)
+
     return {"ok": True}
-
-#send message fn
-
-def send_message(chat_id, text):
-    requests.post(
-        f"{TELEGRAM_API}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": text
-        }
-    )
-
