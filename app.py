@@ -1,55 +1,60 @@
+# ===============================
+# 1. IMPORTS
+# ===============================
 import os
-import pandas as pd
 import requests
-
 from fastapi import FastAPI, Request
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 
-# =====================
-# CONFIG
-# =====================
+# ===============================
+# 2. CONFIG
+# ===============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
-FAQ_FILE = "ecommerce_faq_final.csv"
-SIM_THRESHOLD = 0.3
 
 
-# =====================
-# LOAD FAQ
-# =====================
-faq_df = pd.read_csv(FAQ_FILE)
-
-questions = faq_df["question"].astype(str).tolist()
-answers = faq_df["answer"].astype(str).tolist()
-
-vectorizer = TfidfVectorizer(stop_words="english")
-question_vectors = vectorizer.fit_transform(questions)
-
-
-# =====================
-# FAQ LOGIC
-# =====================
+# ===============================
+# 3. FAQ LOGIC (ALWAYS REPLIES)
+# ===============================
 def faq_chatbot(user_text: str) -> str:
-    user_vec = vectorizer.transform([user_text])
-    scores = cosine_similarity(user_vec, question_vectors)[0]
+    text = user_text.lower()
 
-    best_idx = scores.argmax()
-    best_score = scores[best_idx]
+    if "track" in text or "order" in text:
+        return "📦 You can track your order by going to *My Orders → Track Order*."
 
-    if best_score >= SIM_THRESHOLD:
-        return answers[best_idx]
+    if "payment" in text or "pay" in text:
+        return "💳 We accept Credit Card, Debit Card, UPI, and Net Banking."
 
+    if "return" in text or "refund" in text:
+        return "🔁 Returns are accepted within *7 days* of delivery."
+
+    if "help" in text or "support" in text:
+        return "🆘 You can contact our support team at support@example.com."
+
+    if text == "/start":
+        return (
+            "👋 Welcome to the *E-commerce FAQ Bot!*\n\n"
+            "You can ask things like:\n"
+            "• Track my order\n"
+            "• Payment methods\n"
+            "• Return policy\n\n"
+            "Or use the buttons below 👇"
+        )
+
+    # ✅ ALWAYS FALLBACK
     return (
-        "🤖 Sorry, I couldn’t find an exact answer.\n\n"
-        "Try:\n• Track Order\n• Payments\n• Returns\n• Help"
+        "❓ I didn’t understand that.\n\n"
+        "Please choose one option below or ask:\n"
+        "📦 Track Order\n"
+        "💳 Payments\n"
+        "🔁 Returns\n"
+        "🆘 Help"
     )
 
 
-# =====================
-# FASTAPI
-# =====================
+# ===============================
+# 4. FASTAPI APP
+# ===============================
 app = FastAPI()
 
 
@@ -58,27 +63,30 @@ def health():
     return {"status": "ok"}
 
 
-# =====================
-# SEND MESSAGE
-# =====================
-def send_message(chat_id, text):
+# ===============================
+# 5. SEND MESSAGE (WITH BUTTONS)
+# ===============================
+def send_message(chat_id: int, text: str):
     payload = {
         "chat_id": chat_id,
         "text": text,
+        "parse_mode": "Markdown",
         "reply_markup": {
             "keyboard": [
                 [{"text": "📦 Track Order"}, {"text": "💳 Payments"}],
-                [{"text": "↩️ Returns"}, {"text": "🆘 Help"}],
+                [{"text": "🔁 Returns"}, {"text": "🆘 Help"}],
             ],
             "resize_keyboard": True,
+            "one_time_keyboard": False,
         },
     }
+
     requests.post(f"{TELEGRAM_API}/sendMessage", json=payload)
 
 
-# =====================
-# TELEGRAM WEBHOOK
-# =====================
+# ===============================
+# 6. TELEGRAM WEBHOOK
+# ===============================
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
@@ -87,25 +95,9 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "")
+    user_text = data["message"].get("text", "")
 
-    if text.lower() == "/start":
-        send_message(
-            chat_id,
-            "👋 Welcome to the Ecommerce FAQ Bot!\n\n"
-            "Use the buttons below or ask a question."
-        )
-        return {"ok": True}
-
-    button_map = {
-        "📦 Track Order": "How can I track my order?",
-        "💳 Payments": "What payment methods are accepted?",
-        "↩️ Returns": "What is your return policy?",
-        "🆘 Help": "How can I contact support?",
-    }
-
-    normalized = button_map.get(text, text)
-    reply = faq_chatbot(normalized)
+    reply = faq_chatbot(user_text)
     send_message(chat_id, reply)
 
     return {"ok": True}
