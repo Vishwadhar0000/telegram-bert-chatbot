@@ -2,42 +2,31 @@ import os
 import pandas as pd
 import requests
 from fastapi import FastAPI, Request
-from sentence_transformers import SentenceTransformer, util
 
-# -----------------------------
-# CONFIG
-# -----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # -----------------------------
-# LOAD FAQ + BERT (ONCE)
+# LOAD FAQ
 # -----------------------------
-faq_df = pd.read_csv("ecommerce_faq_final.csv")
+faq = pd.read_csv("ecommerce_faq_final.csv")
 
-questions = faq_df["question"].tolist()
-answers = faq_df["answer"].tolist()
-
-model = SentenceTransformer("all-MiniLM-L6-v2")
-question_embeddings = model.encode(questions, convert_to_tensor=True)
+faq_data = dict(zip(faq["question"].str.lower(), faq["answer"]))
 
 # -----------------------------
-# FAQ CHATBOT LOGIC
+# SIMPLE FAQ LOGIC
 # -----------------------------
 def faq_chatbot(user_text):
-    user_embedding = model.encode(user_text, convert_to_tensor=True)
-    scores = util.cos_sim(user_embedding, question_embeddings)[0]
+    user_text = user_text.lower()
 
-    best_idx = scores.argmax().item()
-    best_score = scores[best_idx].item()
+    for q, a in faq_data.items():
+        if q in user_text or user_text in q:
+            return a
 
-    if best_score < 0.5:
-        return "Sorry, I couldn’t find a relevant answer. Please contact support."
-
-    return answers[best_idx]
+    return "Sorry, I couldn’t find an answer. Please contact support."
 
 # -----------------------------
-# FASTAPI APP
+# FASTAPI
 # -----------------------------
 app = FastAPI()
 
@@ -45,21 +34,12 @@ app = FastAPI()
 def health():
     return {"status": "ok"}
 
-# -----------------------------
-# SEND MESSAGE TO TELEGRAM
-# -----------------------------
 def send_message(chat_id, text):
     requests.post(
         f"{TELEGRAM_API}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": text
-        }
+        json={"chat_id": chat_id, "text": text}
     )
 
-# -----------------------------
-# TELEGRAM WEBHOOK
-# -----------------------------
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
@@ -68,18 +48,18 @@ async def telegram_webhook(request: Request):
         return {"ok": True}
 
     chat_id = data["message"]["chat"]["id"]
-    user_text = data["message"].get("text", "")
+    text = data["message"].get("text", "")
 
-    if user_text.lower() in ["/start", "start"]:
+    if text.lower() in ["/start", "start"]:
         reply = (
             "👋 Welcome to Ecommerce FAQ Bot!\n\n"
-            "You can ask questions like:\n"
-            "- How do I track my order?\n"
-            "- What payment methods are available?\n"
-            "- What is the return policy?"
+            "Ask about:\n"
+            "- Order tracking\n"
+            "- Payments\n"
+            "- Returns"
         )
     else:
-        reply = faq_chatbot(user_text)
+        reply = faq_chatbot(text)
 
     send_message(chat_id, reply)
     return {"ok": True}
