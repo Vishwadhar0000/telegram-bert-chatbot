@@ -3,32 +3,33 @@ import requests
 import pandas as pd
 from fastapi import FastAPI, Request
 
+# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# ---------- LOAD FAQ ----------
-faq = pd.read_csv("ecommerce_faq_final.csv")
+# ================= LOAD FAQ =================
+faq_df = pd.read_csv("ecommerce_faq_final.csv")
 
-faq_pairs = list(zip(
-    faq["question"].str.lower(),
-    faq["answer"]
+faq_data = list(zip(
+    faq_df["question"].str.lower(),
+    faq_df["answer"]
 ))
 
-def faq_chatbot(text: str):
-    text = text.lower()
-    for q, a in faq_pairs:
-        if q in text or text in q:
+def faq_chatbot(user_text: str) -> str:
+    user_text = user_text.lower()
+    for q, a in faq_data:
+        if q in user_text or user_text in q:
             return a
-    return "❓ Sorry, I couldn’t find an answer. Please contact support."
+    return "❓ Sorry, I couldn’t find an answer. Try asking about orders, payments, or returns."
 
-# ---------- FASTAPI ----------
+# ================= FASTAPI =================
 app = FastAPI()
 
 @app.get("/")
 def health():
     return {"status": "ok"}
 
-def send_message(chat_id, text):
+def send_message(chat_id: int, text: str):
     url = f"{TELEGRAM_API}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -40,22 +41,30 @@ def send_message(chat_id, text):
 async def telegram_webhook(request: Request):
     data = await request.json()
 
-    if "message" not in data:
-        return {"ok": True}
+    # -------- NORMAL TEXT MESSAGE --------
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
 
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "")
+        if text.lower() in ["/start", "start"]:
+            reply = (
+                "👋 Welcome to Ecommerce FAQ Bot!\n\n"
+                "Ask me about:\n"
+                "• Order tracking\n"
+                "• Payments\n"
+                "• Returns"
+            )
+        else:
+            reply = faq_chatbot(text)
 
-    if text.lower() in ["/start", "start"]:
-        reply = (
-            "👋 Welcome to Ecommerce FAQ Bot!\n\n"
-            "You can ask about:\n"
-            "- order tracking\n"
-            "- payments\n"
-            "- returns"
-        )
-    else:
+        send_message(chat_id, reply)
+
+    # -------- BUTTON / CALLBACK --------
+    elif "callback_query" in data:
+        chat_id = data["callback_query"]["message"]["chat"]["id"]
+        text = data["callback_query"]["data"]
+
         reply = faq_chatbot(text)
+        send_message(chat_id, reply)
 
-    send_message(chat_id, reply)
     return {"ok": True}
