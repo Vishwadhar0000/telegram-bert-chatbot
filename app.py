@@ -1,33 +1,27 @@
 import os
-import pandas as pd
 import requests
+import pandas as pd
 from fastapi import FastAPI, Request
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# -----------------------------
-# LOAD FAQ
-# -----------------------------
+# ---------- LOAD FAQ ----------
 faq = pd.read_csv("ecommerce_faq_final.csv")
 
-faq_data = dict(zip(faq["question"].str.lower(), faq["answer"]))
+faq_pairs = list(zip(
+    faq["question"].str.lower(),
+    faq["answer"]
+))
 
-# -----------------------------
-# SIMPLE FAQ LOGIC
-# -----------------------------
-def faq_chatbot(user_text):
-    user_text = user_text.lower()
-
-    for q, a in faq_data.items():
-        if q in user_text or user_text in q:
+def faq_chatbot(text: str):
+    text = text.lower()
+    for q, a in faq_pairs:
+        if q in text or text in q:
             return a
+    return "❓ Sorry, I couldn’t find an answer. Please contact support."
 
-    return "Sorry, I couldn’t find an answer. Please contact support."
-
-# -----------------------------
-# FASTAPI
-# -----------------------------
+# ---------- FASTAPI ----------
 app = FastAPI()
 
 @app.get("/")
@@ -35,10 +29,12 @@ def health():
     return {"status": "ok"}
 
 def send_message(chat_id, text):
-    requests.post(
-        f"{TELEGRAM_API}/sendMessage",
-        json={"chat_id": chat_id, "text": text}
-    )
+    url = f"{TELEGRAM_API}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    requests.post(url, json=payload)
 
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
@@ -53,10 +49,10 @@ async def telegram_webhook(request: Request):
     if text.lower() in ["/start", "start"]:
         reply = (
             "👋 Welcome to Ecommerce FAQ Bot!\n\n"
-            "Ask about:\n"
-            "- Order tracking\n"
-            "- Payments\n"
-            "- Returns"
+            "You can ask about:\n"
+            "- order tracking\n"
+            "- payments\n"
+            "- returns"
         )
     else:
         reply = faq_chatbot(text)
