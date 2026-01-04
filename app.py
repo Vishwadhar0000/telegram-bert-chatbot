@@ -26,8 +26,9 @@ def faq_chatbot(user_text: str) -> str:
 app = FastAPI()
 
 @app.get("/")
-def health():
+def root():
     return {"status": "ok"}
+
 
 def send_message(chat_id: int, text: str):
     url = f"{TELEGRAM_API}/sendMessage"
@@ -68,3 +69,4 @@ async def telegram_webhook(request: Request):
         send_message(chat_id, reply)
 
     return {"ok": True}
+
