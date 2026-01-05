@@ -17,7 +17,6 @@ logging.basicConfig(level=logging.INFO)
 
 # ================= LOAD FAQ =================
 
-# CSV must be in the same directory as this app.py on Render
 faq_df = pd.read_csv("ecommerce_faq_final.csv")
 
 # Store questions in lowercase for easier matching
@@ -43,6 +42,30 @@ def faq_chatbot(user_text: str) -> str:
 
     # 3) Fallback
     return "❓ Sorry, I couldn’t find an answer. Try asking about orders, payments, or returns."
+
+# ================= CONVERSATION MEMORY =================
+
+# chat_id -> list of last messages (strings)
+conversation_history = {}
+
+# How many previous user messages to keep per chat
+MAX_HISTORY = 5
+
+def update_history(chat_id: int, user_text: str):
+    history = conversation_history.get(chat_id, [])
+    history.append(user_text)
+    # keep only the last MAX_HISTORY messages
+    conversation_history[chat_id] = history[-MAX_HISTORY:]
+
+def build_context(chat_id: int, user_text: str) -> str:
+    """
+    Build a contextual query from previous messages + current one.
+    """
+    history = conversation_history.get(chat_id, [])
+    if not history:
+        return user_text
+    combined = " ".join(history + [user_text])
+    return combined
 
 # ================= TELEGRAM HELPERS =================
 
@@ -88,12 +111,13 @@ async def telegram_webhook(request: Request):
     data = await request.json()
     logging.info(f"Incoming update: {data}")
 
-    # -------- NORMAL TEXT MESSAGE --------
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "").strip()
 
         if text.lower() in ["/start", "start"]:
+            # reset history on /start
+            conversation_history[chat_id] = []
             reply = (
                 "👋 Welcome to Ecommerce FAQ Bot!\n\n"
                 "Ask me about:\n"
@@ -103,15 +127,19 @@ async def telegram_webhook(request: Request):
                 "• Help"
             )
         else:
+            # update memory
+            update_history(chat_id, text)
+
             key = text.lower()
             if key in BUTTON_MAP:
-                # Button pressed → map to known FAQ question
-                reply = faq_chatbot(BUTTON_MAP[key])
+                # button pressed → map to known FAQ question
+                contextual_query = BUTTON_MAP[key]
             else:
-                # Free-text question → match against CSV
-                reply = faq_chatbot(text)
+                # free text → use recent conversation as context
+                contextual_query = build_context(chat_id, text)
+
+            reply = faq_chatbot(contextual_query)
 
         send_message(chat_id, reply)
 
-    # (Optional) callbacks can be added here if you later use inline keyboards
     return {"ok": True}
