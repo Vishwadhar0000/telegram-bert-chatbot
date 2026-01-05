@@ -1,76 +1,80 @@
 import os
-import pandas as pd
+import logging
+
 import requests
+import pandas as pd
 from fastapi import FastAPI, Request
-from sentence_transformers import SentenceTransformer, util
 
-# =============================
-# CONFIG
-# =============================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+# ================= CONFIG =================
 
-# =============================
-# LOAD MODEL + FAQ
-# =============================
-model = SentenceTransformer("all-MiniLM-L6-v2")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable is not set")
+
+TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+logging.basicConfig(level=logging.INFO)
+
+# ================= LOAD FAQ =================
 
 faq_df = pd.read_csv("ecommerce_faq_final.csv")
-questions = faq_df["question"].tolist()
-answers = faq_df["answer"].tolist()
-question_embeddings = model.encode(questions, convert_to_tensor=True)
+faq_data = list(zip(
+    faq_df["question"].str.lower(),
+    faq_df["answer"]
+))
 
-# =============================
-# FASTAPI APP
-# =============================
+def faq_chatbot(user_text: str) -> str:
+    user_text = user_text.lower()
+    for q, a in faq_data:
+        if q in user_text or user_text in q:
+            return a
+    return "❓ Sorry, I couldn’t find an answer. Try asking about orders, payments, or returns."
+
+# ================= FASTAPI =================
+
 app = FastAPI()
 
 @app.get("/")
 def root():
     return {"status": "ok"}
 
-# =============================
-# FAQ CHATBOT LOGIC
-# =============================
-def faq_chatbot(user_query: str) -> str:
-    query_embedding = model.encode(user_query, convert_to_tensor=True)
-    similarity = util.cos_sim(query_embedding, question_embeddings)
-    best_idx = similarity.argmax().item()
-    best_score = similarity[0][best_idx].item()
-
-    if best_score > 0.6:
-        return answers[best_idx]
-    else:
-        return "Sorry, I couldn’t find an answer to that. Please try asking differently."
-
-# =============================
-# SEND MESSAGE TO TELEGRAM
-# =============================
 def send_message(chat_id: int, text: str):
+    url = f"{TELEGRAM_API}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text
     }
-    requests.post(TELEGRAM_API, json=payload)
+    r = requests.post(url, json=payload)
+    logging.info(f"sendMessage status={r.status_code}, body={r.text}")
 
-# =============================
-# TELEGRAM WEBHOOK
-# =============================
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     data = await request.json()
+    logging.info(f"Incoming update: {data}")
 
-    if "message" not in data:
-        return {"ok": True}
+    # -------- NORMAL TEXT MESSAGE --------
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
 
-    chat_id = data["message"]["chat"]["id"]
-    user_text = data["message"].get("text", "")
+        if text.lower() in ["/start", "start"]:
+            reply = (
+                "👋 Welcome to Ecommerce FAQ Bot!\n\n"
+                "Ask me about:\n"
+                "• Order tracking\n"
+                "• Payments\n"
+                "• Returns"
+            )
+        else:
+            reply = faq_chatbot(text)
 
-    if user_text.startswith("/start"):
-        send_message(chat_id, "👋 Welcome! Ask me anything about orders, payments, or returns.")
-        return {"ok": True}
+        send_message(chat_id, reply)
 
-    reply = faq_chatbot(user_text)
-    send_message(chat_id, reply)
+    # -------- BUTTON / CALLBACK --------
+    elif "callback_query" in data:
+        chat_id = data["callback_query"]["message"]["chat"]["id"]
+        text = data["callback_query"]["data"]
+        reply = faq_chatbot(text)
+        send_message(chat_id, reply)
 
     return {"ok": True}
