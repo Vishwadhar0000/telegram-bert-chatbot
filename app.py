@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 
 import requests
 import pandas as pd
@@ -25,8 +26,19 @@ faq_data = list(zip(
     faq_df["answer"]
 ))
 
+def normalize(s: str) -> str:
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)  # keep letters, numbers, spaces
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
 def faq_chatbot(user_text: str) -> str:
-    """Simple rule-based matcher over the FAQ CSV."""
+    """
+    Rule-based matcher that tries:
+    1) Exact match
+    2) Normalized near-exact match
+    3) Simple fuzzy word-overlap with confidence
+    """
     user_text = user_text.lower().strip()
 
     # 1) Exact question match
@@ -34,13 +46,30 @@ def faq_chatbot(user_text: str) -> str:
         if user_text == q:
             return a
 
-    # 2) Keyword/partial match (any meaningful word in the stored question)
-    words = [w for w in user_text.split() if len(w) > 3]
+    # 2) Normalized near-exact match (ignore punctuation, extra spaces)
+    norm_user = normalize(user_text)
     for q, a in faq_data:
-        if any(w in q for w in words):
+        if normalize(q) == norm_user:
             return a
 
-    # 3) Fallback
+    # 3) Fuzzy match: longest overlap score
+    best_score = 0.0
+    best_answer = None
+    user_words = set(norm_user.split())
+
+    for q, a in faq_data:
+        q_words = set(normalize(q).split())
+        if not q_words:
+            continue
+        score = len(user_words & q_words) / len(q_words)
+        if score > best_score:
+            best_score = score
+            best_answer = a
+
+    # 4) If confidence is decent, return best match; else fallback
+    if best_answer is not None and best_score >= 0.5:
+        return best_answer
+
     return "❓ Sorry, I couldn’t find an answer. Try asking about orders, payments, or returns."
 
 # ================= CONVERSATION MEMORY =================
@@ -59,7 +88,7 @@ def update_history(chat_id: int, user_text: str):
 def build_context(chat_id: int, user_text: str) -> str:
     """
     Build a contextual query from previous messages + current one.
-    This runs for all non-/start messages.
+    This runs for all non-/start free-text messages.
     """
     history = conversation_history.get(chat_id, [])
     if not history:
@@ -133,7 +162,7 @@ async def telegram_webhook(request: Request):
 
             key = text.lower()
             if key in BUTTON_MAP:
-                # buttons → mapped FAQ question (no extra context needed)
+                # buttons → mapped FAQ question
                 contextual_query = BUTTON_MAP[key]
             else:
                 # any free-text question uses conversation context
@@ -144,5 +173,3 @@ async def telegram_webhook(request: Request):
         send_message(chat_id, reply)
 
     return {"ok": True}
-
-
