@@ -88,7 +88,7 @@ def update_history(chat_id: int, user_text: str):
 def build_context(chat_id: int, user_text: str) -> str:
     """
     Build a contextual query from previous messages + current one.
-    This runs for all non-/start free-text messages.
+    Used only when direct match fails.
     """
     history = conversation_history.get(chat_id, [])
     if not history:
@@ -162,13 +162,20 @@ async def telegram_webhook(request: Request):
 
             key = text.lower()
             if key in BUTTON_MAP:
-                # buttons → mapped FAQ question
-                contextual_query = BUTTON_MAP[key]
+                # buttons → mapped FAQ question, no context needed
+                query = BUTTON_MAP[key]
+                reply = faq_chatbot(query)
             else:
-                # any free-text question uses conversation context
-                contextual_query = build_context(chat_id, text)
+                # 1) Try direct match WITHOUT context first
+                direct_answer = faq_chatbot(text)
+                fallback_text = "❓ Sorry, I couldn’t find an answer. Try asking about orders, payments, or returns."
 
-            reply = faq_chatbot(contextual_query)
+                if direct_answer != fallback_text:
+                    reply = direct_answer
+                else:
+                    # 2) If direct match failed, use conversation context
+                    contextual_query = build_context(chat_id, text)
+                    reply = faq_chatbot(contextual_query)
 
         send_message(chat_id, reply)
 
