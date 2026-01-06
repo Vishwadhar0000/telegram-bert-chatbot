@@ -48,7 +48,7 @@ def faq_chatbot(user_text: str) -> str:
 # chat_id -> list of last messages (strings)
 conversation_history = {}
 
-# How many previous user messages to keep per chat (applies to all questions)
+# How many previous user messages to keep per chat
 MAX_HISTORY = 5
 
 def update_history(chat_id: int, user_text: str):
@@ -59,7 +59,7 @@ def update_history(chat_id: int, user_text: str):
 def build_context(chat_id: int, user_text: str) -> str:
     """
     Build a contextual query from previous messages + current one.
-    This runs for ALL non-/start messages (payments, returns, etc.).
+    This runs for all non-/start messages.
     """
     history = conversation_history.get(chat_id, [])
     if not history:
@@ -144,3 +144,5 @@ async def telegram_webhook(request: Request):
         send_message(chat_id, reply)
 
     return {"ok": True}
+
+
