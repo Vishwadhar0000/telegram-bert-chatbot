@@ -48,23 +48,24 @@ def faq_chatbot(user_text: str) -> str:
 # chat_id -> list of last messages (strings)
 conversation_history = {}
 
-# How many previous user messages to keep per chat
+# How many previous user messages to keep per chat (applies to all questions)
 MAX_HISTORY = 5
 
 def update_history(chat_id: int, user_text: str):
     history = conversation_history.get(chat_id, [])
     history.append(user_text)
-    # keep only the last MAX_HISTORY messages
     conversation_history[chat_id] = history[-MAX_HISTORY:]
 
 def build_context(chat_id: int, user_text: str) -> str:
     """
     Build a contextual query from previous messages + current one.
+    This runs for ALL non-/start messages (payments, returns, etc.).
     """
     history = conversation_history.get(chat_id, [])
     if not history:
         return user_text
     combined = " ".join(history + [user_text])
+    logging.info(f"Context for {chat_id}: {combined}")
     return combined
 
 # ================= TELEGRAM HELPERS =================
@@ -127,15 +128,15 @@ async def telegram_webhook(request: Request):
                 "• Help"
             )
         else:
-            # update memory
+            # update memory for ALL questions
             update_history(chat_id, text)
 
             key = text.lower()
             if key in BUTTON_MAP:
-                # button pressed → map to known FAQ question
+                # buttons → mapped FAQ question (no extra context needed)
                 contextual_query = BUTTON_MAP[key]
             else:
-                # free text → use recent conversation as context
+                # any free-text question uses conversation context
                 contextual_query = build_context(chat_id, text)
 
             reply = faq_chatbot(contextual_query)
